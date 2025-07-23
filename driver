@@ -1,0 +1,77 @@
+#include <stdio.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <string.h>
+#include <stdlib.h>
+#include <linux/input.h>
+#include <linux/uinput.h>
+#include <errno.h>
+
+#define REAL_MOUSE "/dev/input/eventX" // ❗ Deine echte Maus hier eintragen
+
+int setup_virtual_mouse() {
+    int vfd = open("/dev/uinput", O_WRONLY | O_NONBLOCK);
+    if (vfd < 0) {
+        perror("Kann /dev/uinput nicht öffnen");
+        return -1;
+    }
+
+    ioctl(vfd, UI_SET_EVBIT, EV_KEY);
+    ioctl(vfd, UI_SET_KEYBIT, BTN_LEFT);
+    ioctl(vfd, UI_SET_KEYBIT, BTN_RIGHT);
+    ioctl(vfd, UI_SET_KEYBIT, BTN_MIDDLE);
+
+    ioctl(vfd, UI_SET_EVBIT, EV_REL);
+    ioctl(vfd, UI_SET_RELBIT, REL_X);
+    ioctl(vfd, UI_SET_RELBIT, REL_Y);
+    ioctl(vfd, UI_SET_RELBIT, REL_WHEEL);
+
+    struct uinput_setup usetup;
+    memset(&usetup, 0, sizeof(usetup));
+    usetup.id.bustype = BUS_USB;
+    usetup.id.vendor  = 0x1234;
+    usetup.id.product = 0x5678;
+    strcpy(usetup.name, "Virtuelle Maus");
+
+    ioctl(vfd, UI_DEV_SETUP, &usetup);
+    ioctl(vfd, UI_DEV_CREATE);
+
+    return vfd;
+}
+
+int main() {
+    // 1. Echte Maus öffnen
+    int mfd = open(REAL_MOUSE, O_RDONLY);
+    if (mfd < 0) {
+        perror("Eingabegerät nicht gefunden");
+        return 1;
+    }
+
+    // 2. Maus exklusiv übernehmen
+    if (ioctl(mfd, EVIOCGRAB, 1) < 0) {
+        perror("EVIOCGRAB fehlgeschlagen");
+        return 2;
+    }
+
+    // 3. Virtuelle Maus erstellen
+    int vfd = setup_virtual_mouse();
+    if (vfd < 0) return 3;
+
+    printf("🎮 Maus-Proxy aktiv\n");
+
+    struct input_event ev;
+    while (read(mfd, &ev, sizeof(ev)) > 0) {
+        // Nur relevante Events weiterleiten
+        if (ev.type == EV_KEY || ev.type == EV_REL || ev.type == EV_SYN) {
+            write(vfd, &ev, sizeof(ev));
+        }
+    }
+
+    // Aufräumen
+    ioctl(vfd, UI_DEV_DESTROY);
+    ioctl(mfd, EVIOCGRAB, 0);
+    close(vfd);
+    close(mfd);
+
+    return 0;
+}
